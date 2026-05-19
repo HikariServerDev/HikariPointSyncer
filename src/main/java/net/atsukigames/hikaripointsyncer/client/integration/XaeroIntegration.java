@@ -7,11 +7,13 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.network.ServerInfo;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -126,6 +128,39 @@ public class XaeroIntegration {
             this.subWorldName = subWorldName;
             this.dimension = dimension;
             this.filePath = filePath;
+        }
+
+        public String getDisplayName(String serverFolder) {
+            if ("default".equals(subWorldName)) {
+                return "default - " + dimension;
+            }
+
+            // Xaeroメモリから "Map X" などのカスタムネームを取得試行
+            String custom = getXaeroSubWorldDisplayName(serverFolder, subWorldName);
+            if (custom != null && !custom.isEmpty()) {
+                return custom + " - " + dimension;
+            }
+
+            // 精密な動的インデックス計算フォールバック
+            try {
+                List<XaeroWorldSet> allSets = getSubWorldsAndDimensions(serverFolder);
+                List<String> otherSubs = new ArrayList<>();
+                for (XaeroWorldSet s : allSets) {
+                    if (s.dimension.equalsIgnoreCase(dimension) && !"default".equals(s.subWorldName)) {
+                        if (!otherSubs.contains(s.subWorldName)) {
+                            otherSubs.add(s.subWorldName);
+                        }
+                    }
+                }
+                java.util.Collections.sort(otherSubs);
+                int idx = otherSubs.indexOf(subWorldName);
+                if (idx >= 0) {
+                    return "Map " + (idx + 1) + " - " + dimension;
+                }
+            } catch (Exception ignored) {}
+
+            String shortId = subWorldName.length() > 8 ? subWorldName.substring(0, 8) : subWorldName;
+            return "Map " + shortId + " - " + dimension;
         }
 
         @Override
@@ -264,6 +299,16 @@ public class XaeroIntegration {
                 HikariPointSyncer.LOGGER.warn("[HPS] saveWaypointsメソッドが見つかりませんでした。メモリへの追加のみ実施します。");
             }
 
+            // 物理ファイルへ直接書き出し (別ディメンション対策)
+            try {
+                String serverFolder = "Multiplayer_unknown";
+                MinecraftClient mc = MinecraftClient.getInstance();
+                if (mc.getCurrentServerEntry() != null) {
+                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
+                }
+                writeWaypointToFileDirectly(wp, serverFolder);
+            } catch (Exception ignored) {}
+
             // ダウンロード済みUUIDを永続化
             ensureIdsLoaded();
             downloadedIds.add(wp.id);
@@ -277,24 +322,14 @@ public class XaeroIntegration {
         }
     }
 
-    /**
-     * 表示用のサーバー名に変換（Multiplayer_ プレフィックスを剥ぎ取り、servers.datから表示名を取得）
-     */
     public static String getDisplayName(String folderName) {
         if (folderName.startsWith("Multiplayer_")) {
             String addr = folderName.substring("Multiplayer_".length()).replace("_", ":");
-            try {
-                MinecraftClient client = MinecraftClient.getInstance();
-                net.minecraft.client.option.ServerList serverList = new net.minecraft.client.option.ServerList(client);
-                serverList.loadFile();
-                for (int i = 0; i < serverList.size(); i++) {
-                    ServerInfo info = serverList.get(i);
-                    if (info.address.replace(":", "_").equalsIgnoreCase(addr.replace(":", "_"))) {
-                        return info.name;
-                    }
-                }
-            } catch (Exception ignored) {}
-            return addr.split(":")[0]; // fallback: ポートなしアドレス
+            // _25565 などのポート表示を除去
+            if (addr.contains(":")) {
+                addr = addr.split(":")[0];
+            }
+            return addr;
         }
         return folderName;
     }
@@ -724,6 +759,16 @@ public class XaeroIntegration {
                 }
             }
 
+            // 物理ファイルから直接削除 (別ディメンション対策)
+            try {
+                String serverFolder = "Multiplayer_unknown";
+                MinecraftClient mc = MinecraftClient.getInstance();
+                if (mc.getCurrentServerEntry() != null) {
+                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
+                }
+                removeWaypointFromFileDirectly(wp, serverFolder);
+            } catch (Exception ignored) {}
+
             // ダウンロード済みリストからも確実に削除
             ensureIdsLoaded();
             downloadedIds.remove(wp.id);
@@ -733,6 +778,190 @@ public class XaeroIntegration {
         } catch (Exception e) {
             HikariPointSyncer.LOGGER.error("[HPS] Xaeroからの反射的削除に失敗しました: " + wp.name, e);
             return false;
+        }
+    }
+
+    /**
+     * Xaeroのメモリ上から、サーバー名・サブワールドIDに対応する WaypointWorld を検索し、
+     * カスタム表示名（例: Map 1）があればそれを取得する。
+     */
+    @SuppressWarnings("unchecked")
+    public static String getXaeroSubWorldDisplayName(String serverOrWorld, String subWorldId) {
+        try {
+            Class<?> sessionClass = Class.forName("xaero.common.XaeroMinimapSession");
+            Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
+            if (session == null) return null;
+
+            Object manager = session.getClass().getMethod("getWaypointsManager").invoke(session);
+            if (manager == null) return null;
+
+            Object container = manager.getClass().getMethod("getContainer").invoke(manager);
+            if (container == null) return null;
+
+            Collection<?> worldContainers = (Collection<?>) container.getClass().getMethod("getWorlds").invoke(container);
+            if (worldContainers == null) return null;
+
+            Object targetServerContainer = null;
+            for (Object sc : worldContainers) {
+                String scId = getWorldIdReflectively(sc);
+                if (scId != null && scId.equalsIgnoreCase(serverOrWorld)) {
+                    targetServerContainer = sc;
+                    break;
+                }
+            }
+            if (targetServerContainer == null) return null;
+
+            for (java.lang.reflect.Method m : targetServerContainer.getClass().getMethods()) {
+                if (m.getName().equalsIgnoreCase("getWorlds") || m.getName().equalsIgnoreCase("getSubWorlds")) {
+                    Collection<?> subWorlds = (Collection<?>) m.invoke(targetServerContainer);
+                    if (subWorlds != null) {
+                        for (Object sw : subWorlds) {
+                            String swId = getWorldIdReflectively(sw);
+                            if (swId != null && swId.equalsIgnoreCase(subWorldId)) {
+                                try {
+                                    String customName = (String) sw.getClass().getMethod("getCustomName").invoke(sw);
+                                    if (customName != null && !customName.isEmpty()) {
+                                        return customName;
+                                    }
+                                } catch (Exception ignored) {}
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /**
+     * 指定されたWaypointを、対応する物理テキストファイル (.txt) に直接書き込んで保存する。
+     * これにより、プレイヤーが別ディメンションにいても100%確実にそのディメンションに同期されます。
+     */
+    public static void writeWaypointToFileDirectly(SyncWaypoint wp, String serverFolder) {
+        try {
+            String dimId = "0";
+            if (wp.dimension.equalsIgnoreCase("the_nether")) dimId = "-1";
+            else if (wp.dimension.equalsIgnoreCase("the_end")) dimId = "1";
+            else if (wp.dimension.startsWith("dim_")) dimId = wp.dimension.replace("dim_", "");
+
+            Path dimDir = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId);
+            if (!Files.exists(dimDir)) {
+                Files.createDirectories(dimDir);
+            }
+
+            // 標準的な mw$default.txt に保存
+            Path txtFile = dimDir.resolve("mw$default.txt");
+            List<String> lines = new ArrayList<>();
+            if (Files.exists(txtFile)) {
+                try (BufferedReader r = Files.newBufferedReader(txtFile, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        lines.add(line);
+                    }
+                }
+            }
+
+            // 1. 同名・同座標の既存のウェイポイント行を削除 (重複対策)
+            List<String> newLines = new ArrayList<>();
+            for (String line : lines) {
+                if (line.startsWith("waypoint:")) {
+                    String[] parts = line.split(":", -1);
+                    if (parts.length >= 6) {
+                        String name = getCleanName(parts[1]);
+                        try {
+                            int x = Integer.parseInt(parts[3]);
+                            int z = Integer.parseInt(parts[5]);
+                            if (name.equalsIgnoreCase(wp.name) && x == wp.x && z == wp.z) {
+                                continue; // 重複行はスキップ（削除）
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+                newLines.add(line);
+            }
+
+            // 2. ヘッダーがない新規ファイルの場合はヘッダーを挿入
+            if (newLines.isEmpty()) {
+                newLines.add("#");
+                newLines.add("#Waypoints");
+                newLines.add("#");
+            }
+
+            // 3. 新しいウェイポイント行を構築して追記
+            // waypoint:Name:Initial:X:Y:Z:Color:Disabled:Type:Set:RotateOnTP:TpYaw:VisType:Dest
+            int yVal = (wp.y == Y_UNKNOWN) ? 64 : wp.y;
+            String wpLine = String.format("waypoint:%s:%s:%d:%d:%d:%d:false:0:gui.xaero_default:false:0:0:false",
+                wp.name, wp.initial, wp.x, yVal, wp.z, wp.color
+            );
+            newLines.add(wpLine);
+
+            // 4. ファイルに上書き保存
+            try (BufferedWriter w = Files.newBufferedWriter(txtFile, StandardCharsets.UTF_8, 
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                for (String l : newLines) {
+                    w.write(l);
+                    w.newLine();
+                }
+            }
+            HikariPointSyncer.LOGGER.info("[HPS] 物理テキストファイルにウェイポイントを直接保存しました: " + txtFile.getFileName());
+        } catch (Exception e) {
+            HikariPointSyncer.LOGGER.error("[HPS] 物理テキストファイルへの直接保存に失敗しました", e);
+        }
+    }
+
+    /**
+     * 指定されたWaypointを、対応する物理テキストファイル (.txt) から直接削除する。
+     */
+    public static void removeWaypointFromFileDirectly(SyncWaypoint wp, String serverFolder) {
+        try {
+            String dimId = "0";
+            if (wp.dimension.equalsIgnoreCase("the_nether")) dimId = "-1";
+            else if (wp.dimension.equalsIgnoreCase("the_end")) dimId = "1";
+            else if (wp.dimension.startsWith("dim_")) dimId = wp.dimension.replace("dim_", "");
+
+            Path txtFile = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId).resolve("mw$default.txt");
+            if (!Files.exists(txtFile)) return;
+
+            List<String> lines = new ArrayList<>();
+            try (BufferedReader r = Files.newBufferedReader(txtFile, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    lines.add(line);
+                }
+            }
+
+            List<String> newLines = new ArrayList<>();
+            boolean modified = false;
+            for (String line : lines) {
+                if (line.startsWith("waypoint:")) {
+                    String[] parts = line.split(":", -1);
+                    if (parts.length >= 6) {
+                        String name = getCleanName(parts[1]);
+                        try {
+                            int x = Integer.parseInt(parts[3]);
+                            int z = Integer.parseInt(parts[5]);
+                            if (name.equalsIgnoreCase(wp.name) && x == wp.x && z == wp.z) {
+                                modified = true;
+                                continue; // 削除
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+                newLines.add(line);
+            }
+
+            if (modified) {
+                try (BufferedWriter w = Files.newBufferedWriter(txtFile, StandardCharsets.UTF_8, 
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    for (String l : newLines) {
+                        w.write(l);
+                        w.newLine();
+                    }
+                }
+                HikariPointSyncer.LOGGER.info("[HPS] 物理テキストファイルからウェイポイントを直接削除しました: " + txtFile.getFileName());
+            }
+        } catch (Exception e) {
+            HikariPointSyncer.LOGGER.error("[HPS] 物理テキストファイルからの直接削除に失敗しました", e);
         }
     }
 }

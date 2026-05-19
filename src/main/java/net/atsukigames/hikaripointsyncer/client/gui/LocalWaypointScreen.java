@@ -93,7 +93,7 @@ public class LocalWaypointScreen extends Screen {
         }
 
         // 初期選択されているサーバー配下の Sub-World / Dimension セット一覧を作成
-        updateSubWorldSets(serverFolderList.get(defSrvIdx));
+        int defDimIdx = updateSubWorldSets(serverFolderList.get(defSrvIdx));
 
         int half  = this.width / 2;
         int dropW = half - 6;
@@ -101,16 +101,18 @@ public class LocalWaypointScreen extends Screen {
         // ── World/Server プルダウン ──
         serverDrop = new DropdownWidget(3, DROP_Y, dropW, DROP_H, serverDisplayList, idx -> {
             String selectedFolder = serverFolderList.get(idx);
-            updateSubWorldSets(selectedFolder);
+            int autoDimIdx = updateSubWorldSets(selectedFolder);
 
             // dimDropを新しいデータで再生成
             dimDrop = new DropdownWidget(half + 3, DROP_Y, dropW, DROP_H, subWorldDisplayList, di -> reloadList());
+            dimDrop.setSelected(autoDimIdx);
             reloadList();
         });
         serverDrop.setSelected(defSrvIdx);
 
         // ── Sub-World/Dimension プルダウン ──
         dimDrop = new DropdownWidget(half + 3, DROP_Y, dropW, DROP_H, subWorldDisplayList, idx -> reloadList());
+        dimDrop.setSelected(defDimIdx);
 
         // ── ウェイポイントリスト ──
         listWidget = new UploadListWidget(this.client, this.width, this.height,
@@ -126,20 +128,44 @@ public class LocalWaypointScreen extends Screen {
         ));
     }
 
-    private void updateSubWorldSets(String serverFolder) {
+    private int updateSubWorldSets(String serverFolder) {
         subWorldSets = new ArrayList<>(XaeroIntegration.getSubWorldsAndDimensions(serverFolder));
         subWorldDisplayList = new ArrayList<>();
 
         for (XaeroWorldSet set : subWorldSets) {
-            subWorldDisplayList.add(set.toString());
+            subWorldDisplayList.add(set.getDisplayName(serverFolder));
         }
 
         if (subWorldDisplayList.isEmpty()) {
-            subWorldDisplayList.add("default (overworld)");
+            subWorldDisplayList.add("default - overworld");
             subWorldSets.add(new XaeroWorldSet("default", "overworld", null));
         }
 
+        // 現在のディメンションを特定して自動選択インデックスを計算
+        String myDim = "overworld";
+        if (client != null && client.world != null) {
+            if (client.world.getRegistryKey() == net.minecraft.world.World.NETHER) myDim = "the_nether";
+            else if (client.world.getRegistryKey() == net.minecraft.world.World.END) myDim = "the_end";
+        }
+
+        int defDimIdx = 0;
+        for (int i = 0; i < subWorldSets.size(); i++) {
+            if (subWorldSets.get(i).dimension.equalsIgnoreCase(myDim)) {
+                defDimIdx = i;
+                break;
+            }
+        }
+
+        // 該当項目に (auto) を追記
+        if (defDimIdx >= 0 && defDimIdx < subWorldDisplayList.size()) {
+            String orig = subWorldDisplayList.get(defDimIdx);
+            if (!orig.contains("(auto)")) {
+                subWorldDisplayList.set(defDimIdx, orig + " (auto)");
+            }
+        }
+
         HikariPointSyncer.LOGGER.info("[HPS] サーバー " + serverFolder + " のSub-Worldセット: " + subWorldDisplayList);
+        return defDimIdx;
     }
 
     /** 選択中のサーバー+Sub-Worldセットでリストをロード */

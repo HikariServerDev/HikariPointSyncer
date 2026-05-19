@@ -96,7 +96,8 @@ sequenceDiagram
 
 *   [LocalWaypointScreen.java](/HikariPointSyncer/src/main/java/net/atsukigames/hikaripointsyncer/client/gui/LocalWaypointScreen.java)
     *   **役割**: ローカルのXaeroウェイポイントをスキャンし、アップロードするための画面。
-    *   **重複アップロード防止**: サーバーの共有リスト内にすでに存在するウェイポイントについては、自動的にボタンを「済み（ブラックアウト）」にして活性化させず、再アップロードできない制御を施しています。
+    *   **表示名の完全最適化**: サーバーフォルダ表示名を Minecraft 設定名から Xaero UI と全く同じ「ドメイン名（例: `-.h-.com`）」に統一。また、ハッシュIDで命名されたサブワールドフォルダ名も、メモリリフレクションおよび精密な動的インデックス順序の再現により、Xaero と完全に一致する **`Map 1 - the_nether`** などの親切な表記でスキャンリストを構築します。
+    *   **インテリジェント自動選択**: 「World/Server」プルダウンのみならず、「Sub-World/Dimension」プルダウンにおいても、**プレイヤーが現在滞在しているアクティブディメンションを自動的に判別して初期選択し、`(auto)` ラベルを追記**します。
     *   **幽霊データ（削除済み）の完全排除アルゴリズム**: Xaeroの非同期ディスクセーブ仕様（プレイヤーが現在いない他ディメンションファイルが更新されない現象など）に対処するため、ディスクの `.txt` ファイルからデータをロードする際、**Xaeroの実行メモリ（`getMemoryWaypoints()`）と常時リアルタイムに突き合わせるフィルタリング処理**を実装しています。現在アクティブなディメンションにおいて、メモリ上から削除されたウェイポイントがディスクファイルに幽霊のように残っていたとしても、リスト構築時に自動的に検知して100%確実に除外・クリーンアップし、表示上の不一致を完全に防ぎます。
 
 *   [SharedWaypointListWidget.java](/HikariPointSyncer/src/main/java/net/atsukigames/hikaripointsyncer/client/gui/SharedWaypointListWidget.java)
