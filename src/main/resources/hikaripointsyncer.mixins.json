@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "net.atsukigames.hikaripointsyncer.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "TitleScreenMixin",
+    "XaeroWorldMapGuiMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

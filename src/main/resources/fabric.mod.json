@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "hikaripointsyncer",
+  "version": "${version}",
+  "name": "HikariPointSyncer",
+  "description": "Xaero's World Map Waypoints Synchronization Mod",
+  "authors": [
+    "AtsukiGames"
+  ],
+  "contributors": [
+    "光鯖 HikariServer"
+  ],
+  "credits": "光鯖 HikariServer",
+  "contact": {
+    "homepage": "https://github.com/HikariServerDev/HikariPointSyncer",
+    "sources": "https://github.com/HikariServerDev/HikariPointSyncer"
+  },
+  "license": "Apache-2.0",
+  "icon": "assets/hikaripointsyncer/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.atsukigames.hikaripointsyncer.HikariPointSyncer"
+    ],
+    "client": [
+      "net.atsukigames.hikaripointsyncer.client.HikariPointSyncerClient"
+    ]
+  },
+  "mixins": [
+    "hikaripointsyncer.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.22",
+    "minecraft": "~1.18.2",
+    "java": ">=17",
+    "fabric-api": "*"
+  },
+  "custom": {
+    "modmenu": {
+      "links": {
+        "Discord": "https://discord.gg/SHsTX9AXsW"
+      }
+    }
+  }
+}
