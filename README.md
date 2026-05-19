@@ -1,6 +1,6 @@
 # HikariPointSyncer - 共有ウェイポイント同期システム
 
-**HikariPointSyncer** は、マルチプレイヤーサーバー内の全プレイヤー間で **Xaero's Minimap** および **Xaero's World Map** のウェイポイントをリアルタイムに共有・同期・管理するためのマインクラフト（Fabric 1.18.2）Modです。
+**HikariPointSyncer** は、マルチプレイヤーサーバー内の全プレイヤー間で **Xaero's Minimap** および **Xaero's World Map** のウェイポイントをリアルタイムに共有・同期・管理するためのMinecraft Java Fabric 1.18.2 Modです。
 
 ゲーム内のHUDやマップ画面の見た目の美しさを崩すことなく、完璧にバックグラウンドで座標情報の自動同期を行います。
 
