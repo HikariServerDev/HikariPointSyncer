@@ -647,11 +647,18 @@ public class XaeroIntegration {
                             int y = yField.getInt(wpObj);
                             int z = zField.getInt(wpObj);
                             
+                            MinecraftClient mc = MinecraftClient.getInstance();
+                            String activeDim = "overworld";
+                            if (mc.world != null) {
+                                if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
+                                else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
+                            }
+
                             all.add(new SyncWaypoint(
                                 UUID.randomUUID(),
                                 getCleanName(name),
                                 "", x, y, z,
-                                "overworld", // fallback
+                                activeDim, // fallback
                                 "Unknown",
                                 System.currentTimeMillis(),
                                 false, 0L, 2
@@ -881,8 +888,8 @@ public class XaeroIntegration {
                 Files.createDirectories(dimDir);
             }
 
-            // 標準的な mw$default.txt に保存
-            Path txtFile = dimDir.resolve("mw$default.txt");
+            // 現在のサブワールドに対応するテキストファイル名に保存 (Velocity等の複数サーバー対応)
+            Path txtFile = dimDir.resolve("mw$" + getCurrentSubWorldName() + ".txt");
             List<String> lines = new ArrayList<>();
             if (Files.exists(txtFile)) {
                 try (BufferedReader r = Files.newBufferedReader(txtFile, StandardCharsets.UTF_8)) {
@@ -952,7 +959,7 @@ public class XaeroIntegration {
             else if (wp.dimension.equalsIgnoreCase("the_end")) dimId = "1";
             else if (wp.dimension.startsWith("dim_")) dimId = wp.dimension.replace("dim_", "");
 
-            Path txtFile = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId).resolve("mw$default.txt");
+            Path txtFile = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId).resolve("mw$" + getCurrentSubWorldName() + ".txt");
             if (!Files.exists(txtFile)) return;
 
             List<String> lines = new ArrayList<>();
@@ -1031,5 +1038,51 @@ public class XaeroIntegration {
         
         // 最終フォールバック
         return dimension;
+    }
+
+    /**
+     * 現在 Xaero が接続しているアクティブなサブワールド名 (例: default や -1067434416_9) をメモリから動的に取得する。
+     */
+    public static String getCurrentSubWorldName() {
+        try {
+            Class<?> sessionClass = Class.forName("xaero.common.XaeroMinimapSession");
+            Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
+            if (session == null) return "default";
+
+            Object manager = session.getClass().getMethod("getWaypointsManager").invoke(session);
+            if (manager == null) return "default";
+
+            Object world = manager.getClass().getMethod("getCurrentWorld").invoke(manager);
+            if (world == null) return "default";
+
+            Object container = world.getClass().getMethod("getContainer").invoke(world);
+            if (container == null) return "default";
+
+            java.lang.reflect.Method m = container.getClass().getMethod("getCurrentSubWorldId");
+            if (m != null) {
+                String sub = (String) m.invoke(container);
+                if (sub != null && !sub.isEmpty()) {
+                    return sub;
+                }
+            }
+        } catch (Exception e1) {
+            try {
+                Class<?> sessionClass = Class.forName("xaero.common.XaeroMinimapSession");
+                Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
+                Object manager = session.getClass().getMethod("getWaypointsManager").invoke(session);
+                Object world = manager.getClass().getMethod("getCurrentWorld").invoke(manager);
+                Object container = world.getClass().getMethod("getContainer").invoke(world);
+                for (java.lang.reflect.Method m : container.getClass().getDeclaredMethods()) {
+                    if (m.getName().toLowerCase().contains("subworld") && m.getReturnType() == String.class && m.getParameterCount() == 0) {
+                        m.setAccessible(true);
+                        String sub = (String) m.invoke(container);
+                        if (sub != null && !sub.isEmpty()) {
+                            return sub;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return "default";
     }
 }
