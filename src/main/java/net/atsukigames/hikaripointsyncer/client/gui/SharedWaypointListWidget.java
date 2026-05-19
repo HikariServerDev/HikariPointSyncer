@@ -173,7 +173,8 @@ public class SharedWaypointListWidget extends AlwaysSelectedEntryListWidget<Shar
             }
 
             // ディメンション
-            mc.textRenderer.draw(matrices, wp.dimension, x + 22, y + 14, dimColor);
+            String friendlyDim = net.atsukigames.hikaripointsyncer.client.integration.XaeroIntegration.getFriendlyDimensionDisplayName(wp.dimension);
+            mc.textRenderer.draw(matrices, friendlyDim, x + 22, y + 14, dimColor);
 
             // 座標
             String yStr = (wp.y == XaeroIntegration.Y_UNKNOWN) ? "~" : String.valueOf(wp.y);

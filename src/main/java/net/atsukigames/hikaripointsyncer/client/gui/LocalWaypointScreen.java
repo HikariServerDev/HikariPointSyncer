@@ -221,7 +221,7 @@ public class LocalWaypointScreen extends Screen {
         }
 
         HikariPointSyncer.LOGGER.info("[HPS] 読み込まれたWaypoint数=" + filteredWps.size() + " (フィルタ前=" + fileWps.size() + ")");
-        listWidget.clearAndAdd(filteredWps);
+        listWidget.clearAndAdd(filteredWps, selectedSet.getDisplayName(serverFolder));
     }
 
     @Override
@@ -285,17 +285,19 @@ public class LocalWaypointScreen extends Screen {
         @Override
         protected int getScrollbarPositionX() { return this.left + this.width - 6; }
 
-        public void clearAndAdd(List<SyncWaypoint> wps) {
+        public void clearAndAdd(List<SyncWaypoint> wps, String mapDisplayName) {
             this.clearEntries();
-            for (SyncWaypoint wp : wps) this.addEntry(new Entry(wp));
+            for (SyncWaypoint wp : wps) this.addEntry(new Entry(wp, mapDisplayName));
         }
 
         public static class Entry extends AlwaysSelectedEntryListWidget.Entry<Entry> {
             private final SyncWaypoint wp;
+            private final String mapDisplayName;
             private final ButtonWidget btn;
 
-            public Entry(SyncWaypoint wp) {
+            public Entry(SyncWaypoint wp, String mapDisplayName) {
                 this.wp = wp;
+                this.mapDisplayName = mapDisplayName;
                 
                 // サーバーの共有リスト（ClientWaypointManager）内に既に同じ名前・座標のものが存在するかチェック
                 boolean alreadySynced = false;
@@ -337,7 +339,7 @@ public class LocalWaypointScreen extends Screen {
                 mc.textRenderer.draw(m, "]", x + 2 + bracketW + initialW, y + 3, 0xFFFFFF);
 
                 mc.textRenderer.draw(m, wp.name, x + 22, y + 3, 0x55FF55);
-                mc.textRenderer.draw(m, wp.dimension, x + 22, y + 14, 0x55FFFF);
+                mc.textRenderer.draw(m, mapDisplayName, x + 22, y + 14, 0x55FFFF);
 
                 // Y座標が ~ の場合をサポート
                 String yStr = (wp.y == XaeroIntegration.Y_UNKNOWN) ? "~" : String.valueOf(wp.y);

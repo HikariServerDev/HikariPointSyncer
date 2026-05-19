@@ -176,6 +176,33 @@ public class XaeroIntegration {
     @SuppressWarnings("unchecked")
     public static boolean addWaypointToXaeroReflectively(SyncWaypoint wp) {
         try {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            String activeDim = "overworld";
+            if (mc.world != null) {
+                if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
+                else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
+            }
+
+            // 1. 物理ファイルへ直接書き出し (別ディメンション対策) - 常に実行
+            try {
+                String serverFolder = "Multiplayer_unknown";
+                if (mc.getCurrentServerEntry() != null) {
+                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
+                }
+                writeWaypointToFileDirectly(wp, serverFolder);
+            } catch (Exception ignored) {}
+
+            // 2. 現在プレイヤーがいるアクティブなディメンションではない場合、
+            // メモリに無理やり追加するとXaero内部状態の不整合でNPEクラッシュを引き起こすため、
+            // メモリへの反射的追加はスキップし、物理ファイル書き込みのみで終了する。
+            if (!wp.dimension.equalsIgnoreCase(activeDim)) {
+                ensureIdsLoaded();
+                downloadedIds.add(wp.id);
+                saveDownloadedIds();
+                HikariPointSyncer.LOGGER.info("[HPS] 他ディメンションのため物理ファイルへの書き込みのみ実行しました: " + wp.name);
+                return true;
+            }
+
             Class<?> sessionClass = Class.forName("xaero.common.XaeroMinimapSession");
             Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
             if (session == null) return false;
@@ -298,16 +325,6 @@ public class XaeroIntegration {
             if (!saved) {
                 HikariPointSyncer.LOGGER.warn("[HPS] saveWaypointsメソッドが見つかりませんでした。メモリへの追加のみ実施します。");
             }
-
-            // 物理ファイルへ直接書き出し (別ディメンション対策)
-            try {
-                String serverFolder = "Multiplayer_unknown";
-                MinecraftClient mc = MinecraftClient.getInstance();
-                if (mc.getCurrentServerEntry() != null) {
-                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
-                }
-                writeWaypointToFileDirectly(wp, serverFolder);
-            } catch (Exception ignored) {}
 
             // ダウンロード済みUUIDを永続化
             ensureIdsLoaded();
@@ -654,6 +671,31 @@ public class XaeroIntegration {
     @SuppressWarnings("unchecked")
     public static boolean removeWaypointFromXaeroReflectively(SyncWaypoint wp) {
         try {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            String activeDim = "overworld";
+            if (mc.world != null) {
+                if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
+                else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
+            }
+
+            // 1. 物理ファイルから直接削除 - 常に実行
+            try {
+                String serverFolder = "Multiplayer_unknown";
+                if (mc.getCurrentServerEntry() != null) {
+                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
+                }
+                removeWaypointFromFileDirectly(wp, serverFolder);
+            } catch (Exception ignored) {}
+
+            // 2. 他ディメンションの場合は物理ディスクファイルから削除しただけで終了する (メモリ操作スキップでクラッシュ回避)
+            if (!wp.dimension.equalsIgnoreCase(activeDim)) {
+                ensureIdsLoaded();
+                downloadedIds.remove(wp.id);
+                saveDownloadedIds();
+                HikariPointSyncer.LOGGER.info("[HPS] 他ディメンションのため物理ファイルからの削除のみ実行しました: " + wp.name);
+                return true;
+            }
+
             Class<?> sessionClass = Class.forName("xaero.common.XaeroMinimapSession");
             Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
             if (session == null) return false;
@@ -758,16 +800,6 @@ public class XaeroIntegration {
                     } catch (Exception ignored) {}
                 }
             }
-
-            // 物理ファイルから直接削除 (別ディメンション対策)
-            try {
-                String serverFolder = "Multiplayer_unknown";
-                MinecraftClient mc = MinecraftClient.getInstance();
-                if (mc.getCurrentServerEntry() != null) {
-                    serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
-                }
-                removeWaypointFromFileDirectly(wp, serverFolder);
-            } catch (Exception ignored) {}
 
             // ダウンロード済みリストからも確実に削除
             ensureIdsLoaded();
@@ -890,8 +922,9 @@ public class XaeroIntegration {
             // 3. 新しいウェイポイント行を構築して追記
             // waypoint:Name:Initial:X:Y:Z:Color:Disabled:Type:Set:RotateOnTP:TpYaw:VisType:Dest
             int yVal = (wp.y == Y_UNKNOWN) ? 64 : wp.y;
+            String fullName = wp.name + " [hps:" + wp.id + "]";
             String wpLine = String.format("waypoint:%s:%s:%d:%d:%d:%d:false:0:gui.xaero_default:false:0:0:false",
-                wp.name, wp.initial, wp.x, yVal, wp.z, wp.color
+                fullName, wp.initial, wp.x, yVal, wp.z, wp.color
             );
             newLines.add(wpLine);
 
@@ -963,5 +996,40 @@ public class XaeroIntegration {
         } catch (Exception e) {
             HikariPointSyncer.LOGGER.error("[HPS] 物理テキストファイルからの直接削除に失敗しました", e);
         }
+    }
+
+    /**
+     * 指定されたディメンション名 (overworldなど) に対応する、現在アクティブなサーバーフォルダ内の
+     * XaeroWorldSet 向けの美しい表示名 (例: Map 1 - overworld や default - overworld) を動的に逆引きする。
+     */
+    public static String getFriendlyDimensionDisplayName(String dimension) {
+        try {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc.getCurrentServerEntry() == null) {
+                return dimension; // マルチ接続中でない場合はそのまま返す
+            }
+            String serverFolder = "Multiplayer_" + mc.getCurrentServerEntry().address.replace(":", "_");
+            
+            // そのサーバーのサブワールド一覧を取得
+            List<XaeroWorldSet> sets = getSubWorldsAndDimensions(serverFolder);
+            // 該当するディメンションで、現在メモリに対応している、またはデフォルトのものを探す
+            XaeroWorldSet bestMatch = null;
+            for (XaeroWorldSet set : sets) {
+                if (set.dimension.equalsIgnoreCase(dimension)) {
+                    bestMatch = set;
+                    // defaultがあればdefaultを最優先にする
+                    if ("default".equals(set.subWorldName)) {
+                        break; // defaultが見つかったら即決
+                    }
+                }
+            }
+            
+            if (bestMatch != null) {
+                return bestMatch.getDisplayName(serverFolder);
+            }
+        } catch (Exception ignored) {}
+        
+        // 最終フォールバック
+        return dimension;
     }
 }
