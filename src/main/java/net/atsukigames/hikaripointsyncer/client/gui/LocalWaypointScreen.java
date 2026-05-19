@@ -154,10 +154,48 @@ public class LocalWaypointScreen extends Screen {
         XaeroWorldSet selectedSet = subWorldSets.get(setIdx);
         HikariPointSyncer.LOGGER.info("[HPS] 選択されたSubWorldセット: " + selectedSet + ", パス=" + selectedSet.filePath);
 
-        List<SyncWaypoint> wps = XaeroIntegration.getWaypointsFromSet(selectedSet, serverFolder);
-        HikariPointSyncer.LOGGER.info("[HPS] 読み込まれたWaypoint数=" + wps.size());
+        // 1. まずディスクのテキストファイルからローカルウェイポイントを読み込む
+        List<SyncWaypoint> fileWps = XaeroIntegration.getWaypointsFromSet(selectedSet, serverFolder);
+        
+        // 2. メモリ上（Xaeroの実行状態）に実際にロードされているウェイポイントリストを取得
+        List<SyncWaypoint> memoryWps = XaeroIntegration.getMemoryWaypoints();
+        
+        // 3. 現在接続中のディメンションに関して、メモリ上に存在しない（＝実際に削除された）幽霊データを完全に除外
+        List<SyncWaypoint> filteredWps = new ArrayList<>();
+        for (SyncWaypoint fileWp : fileWps) {
+            boolean existsInMemory = false;
+            for (SyncWaypoint memWp : memoryWps) {
+                if (memWp.name.equalsIgnoreCase(fileWp.name)
+                    && memWp.x == fileWp.x
+                    && memWp.z == fileWp.z
+                    && memWp.dimension.equalsIgnoreCase(fileWp.dimension)) {
+                    existsInMemory = true;
+                    break;
+                }
+            }
+            
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc.world != null) {
+                String activeDim = "overworld";
+                if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
+                else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
+                
+                // 現在プレイヤーがいるアクティブなディメンションである場合、メモリ側の状態を「真の正解」とし、メモリにないものは除外する
+                if (selectedSet.dimension.equalsIgnoreCase(activeDim)) {
+                    if (existsInMemory) {
+                        filteredWps.add(fileWp);
+                    }
+                } else {
+                    // 現在プレイヤーがいない他のディメンションのデータについては、メモリにロードされていないだけなのでディスクデータを表示する
+                    filteredWps.add(fileWp);
+                }
+            } else {
+                filteredWps.add(fileWp);
+            }
+        }
 
-        listWidget.clearAndAdd(wps);
+        HikariPointSyncer.LOGGER.info("[HPS] 読み込まれたWaypoint数=" + filteredWps.size() + " (フィルタ前=" + fileWps.size() + ")");
+        listWidget.clearAndAdd(filteredWps);
     }
 
     @Override

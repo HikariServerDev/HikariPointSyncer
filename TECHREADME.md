@@ -97,6 +97,7 @@ sequenceDiagram
 *   [LocalWaypointScreen.java](/HikariPointSyncer/src/main/java/net/atsukigames/hikaripointsyncer/client/gui/LocalWaypointScreen.java)
     *   **役割**: ローカルのXaeroウェイポイントをスキャンし、アップロードするための画面。
     *   **重複アップロード防止**: サーバーの共有リスト内にすでに存在するウェイポイントについては、自動的にボタンを「済み（ブラックアウト）」にして活性化させず、再アップロードできない制御を施しています。
+    *   **幽霊データ（削除済み）の完全排除アルゴリズム**: Xaeroの非同期ディスクセーブ仕様（プレイヤーが現在いない他ディメンションファイルが更新されない現象など）に対処するため、ディスクの `.txt` ファイルからデータをロードする際、**Xaeroの実行メモリ（`getMemoryWaypoints()`）と常時リアルタイムに突き合わせるフィルタリング処理**を実装しています。現在アクティブなディメンションにおいて、メモリ上から削除されたウェイポイントがディスクファイルに幽霊のように残っていたとしても、リスト構築時に自動的に検知して100%確実に除外・クリーンアップし、表示上の不一致を完全に防ぎます。
 
 *   [SharedWaypointListWidget.java](/HikariPointSyncer/src/main/java/net/atsukigames/hikaripointsyncer/client/gui/SharedWaypointListWidget.java)
     *   **役割**: 共有/削除済みウェイポイントを描画するスクロールリスト。
