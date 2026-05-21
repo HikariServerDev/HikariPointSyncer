@@ -158,8 +158,9 @@ public class DropdownWidget extends DrawableHelper {
                     return true;
                 }
             }
-            // リスト外クリック → 閉じる
+            // リスト外クリック → 閉じるだけ。クリックを消費し、背後のウィジェットへ透過させない。
             open = false;
+            return true;
         }
         return false;
     }

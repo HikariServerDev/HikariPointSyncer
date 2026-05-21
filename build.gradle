@@ -12,10 +12,12 @@ base {
 
 repositories {
     maven {
-        name = "CurseMaven"
-        url = "https://curse.maven.ag"
+        // Xaero's Minimap / World Map を取得する Modrinth Maven。
+        // CurseForge の数値ファイルIDより安定した版数指定ができるため Modrinth を採用。
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
         content {
-            includeGroup "curse.maven"
+            includeGroup "maven.modrinth"
         }
     }
 }
@@ -26,7 +28,12 @@ dependencies {
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    // We will add xaero's minimap and world map later once we get file IDs
+    // Xaero's Minimap / World Map（Minecraft 1.18.2 / Fabric 対応版）。
+    // バージョンは gradle.properties で管理。サーバーで使用中の Xaero の版に合わせて変更可。
+    // 本Modは Xaero の内部クラスへリフレクションでアクセスするため、Xaero 非導入環境でも起動する
+    // （fabric.mod.json の depends に Xaero は含めない）。ビルド成果物に Xaero は同梱されない。
+    modImplementation "maven.modrinth:xaeros-minimap:${project.xaero_minimap_version}"
+    modImplementation "maven.modrinth:xaeros-world-map:${project.xaero_worldmap_version}"
 }
 
 processResources {
