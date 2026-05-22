@@ -2,10 +2,12 @@
   "schemaVersion": 1,
   "id": "hikaripointsyncer",
   "version": "${version}",
-  "name": "HikariPointSyncer (Test Build)",
-  "description": "Xaero's World Map Waypoints Synchronization Mod — test build",
+  "name": "HikariPointSyncer",
+  "description": "Xaero's World Map Waypoints Synchronization Mod",
   "authors": [
-    "AtsukiGames"
+    "AtsukiGames",
+    "Sim_256",
+    "光鯖 HikariServer"
   ],
   "contributors": [
     "光鯖 HikariServer"
@@ -38,7 +40,7 @@
   "custom": {
     "modmenu": {
       "links": {
-        "Discord": "https://discord.gg/SHsTX9AXsW"
+        "Discord": "https://discord.hikariserver.com"
       }
     }
   }
