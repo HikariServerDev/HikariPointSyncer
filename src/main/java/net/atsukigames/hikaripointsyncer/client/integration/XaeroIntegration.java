@@ -119,6 +119,32 @@ public class XaeroIntegration {
         return false;
     }
 
+    /**
+     * 指定の (サーバーフォルダ, セット) が、プレイヤーが今まさにプレイ中の文脈
+     * （接続中サーバー＋アクティブSub-World＋アクティブDimension）と完全一致するかを返す。
+     *
+     * Xaeroは「今いるSub-World/Dimension」しかメモリにロードしないため、
+     * メモリと突き合わせる幽霊データ除去は、この文脈と一致するときだけ行ってよい。
+     * 別サーバー・別Sub-World・別Dimensionのデータをメモリと突き合わせると、
+     * 単にメモリに無いだけのデータまで誤って消えてしまう。
+     */
+    public static boolean isLiveContext(String serverFolder, XaeroWorldSet set) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc == null || mc.world == null || set == null) return false;
+
+        ServerInfo srv = mc.getCurrentServerEntry();
+        if (srv == null) return false; // シングルプレイ/LANはディスク内容をそのまま表示する
+        String currentFolder = "Multiplayer_" + srv.address.replace(":", "_");
+        if (!currentFolder.equalsIgnoreCase(serverFolder)) return false;
+
+        String activeDim = "overworld";
+        if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
+        else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
+        if (!set.dimension.equalsIgnoreCase(activeDim)) return false;
+
+        return set.subWorldName.equalsIgnoreCase(getCurrentSubWorldName());
+    }
+
     public static class XaeroWorldSet {
         public final String subWorldName; // "default", "386166032_2" など
         public final String dimension;    // "overworld", "the_nether" など
@@ -141,19 +167,19 @@ public class XaeroIntegration {
                 return custom + " - " + dimension;
             }
 
-            // 精密な動的インデックス計算フォールバック
+            // 精密な動的インデックス計算フォールバック。
+            // Map番号は全ディメンション横断で採番し、同じSub-Worldがどのディメンションでも
+            // 必ず同じ "Map N" 表記になるようにする（Dimension別に採番すると不整合になるため）。
             try {
                 List<XaeroWorldSet> allSets = getSubWorldsAndDimensions(serverFolder);
-                List<String> otherSubs = new ArrayList<>();
+                List<String> allSubs = new ArrayList<>();
                 for (XaeroWorldSet s : allSets) {
-                    if (s.dimension.equalsIgnoreCase(dimension) && !"default".equals(s.subWorldName)) {
-                        if (!otherSubs.contains(s.subWorldName)) {
-                            otherSubs.add(s.subWorldName);
-                        }
+                    if (!"default".equals(s.subWorldName) && !allSubs.contains(s.subWorldName)) {
+                        allSubs.add(s.subWorldName);
                     }
                 }
-                java.util.Collections.sort(otherSubs);
-                int idx = otherSubs.indexOf(subWorldName);
+                java.util.Collections.sort(allSubs);
+                int idx = allSubs.indexOf(subWorldName);
                 if (idx >= 0) {
                     return "Map " + (idx + 1) + " - " + dimension;
                 }
@@ -388,6 +414,7 @@ public class XaeroIntegration {
      */
     public static List<XaeroWorldSet> getSubWorldsAndDimensions(String serverOrWorld) {
         List<XaeroWorldSet> list = new ArrayList<>();
+        Set<String> seenKeys = new HashSet<>();
         Path serverDir = XAERO_DIR.resolve(serverOrWorld);
         if (!Files.exists(serverDir)) return list;
 
@@ -412,6 +439,9 @@ public class XaeroIntegration {
                         if (fileName.startsWith("mw$") && fileName.endsWith(".txt")) {
                             subWorld = fileName.substring(3, fileName.length() - 4);
                         }
+                        // 同一 Dimension + Sub-World の重複を排除（waypoints.txt と mw$default.txt の併存等）。
+                        // txtFiles は名前順ソート済みなので "mw$..." が "waypoints.txt" より先に採用される。
+                        if (!seenKeys.add(friendlyDim + " " + subWorld)) continue;
                         list.add(new XaeroWorldSet(subWorld, friendlyDim, txtFile));
                     }
                 } catch (IOException ignored) {}
@@ -429,6 +459,31 @@ public class XaeroIntegration {
         if ("-1".equals(dimId)) return "the_nether";
         if ("1".equals(dimId)) return "the_end";
         return "dim_" + dimId;
+    }
+
+    /** ディメンション名を Xaero の dim フォルダID ("0" / "-1" / "1" / dim_X→X) に変換する */
+    private static String dimIdOf(String dimension) {
+        if (dimension.equalsIgnoreCase("the_nether")) return "-1";
+        if (dimension.equalsIgnoreCase("the_end")) return "1";
+        if (dimension.startsWith("dim_")) return dimension.replace("dim_", "");
+        return "0";
+    }
+
+    /**
+     * 指定のサーバー/ディメンション/サブワールドに対応する実ファイルパスを解決する。
+     * 既存ファイル（新形式 mw$&lt;sub&gt;.txt または旧形式 waypoints.txt）があればそれを再利用し、
+     * 無ければ新形式 mw$&lt;sub&gt;.txt を返す。
+     * これにより、読み取り側が認識するファイルと書き込み先ファイルがズレて同期が反映されない問題を防ぐ。
+     */
+    private static Path resolveWaypointFile(String serverFolder, String dimension, String subWorldName) {
+        Path dimDir = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimIdOf(dimension));
+        Path mwFile = dimDir.resolve("mw$" + subWorldName + ".txt");
+        if (Files.exists(mwFile)) return mwFile;
+        if ("default".equalsIgnoreCase(subWorldName)) {
+            Path legacy = dimDir.resolve("waypoints.txt");
+            if (Files.exists(legacy)) return legacy;
+        }
+        return mwFile;
     }
 
     /**
@@ -668,7 +723,12 @@ public class XaeroIntegration {
                 }
             } catch (Exception ignored) {}
 
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            // ここを握り潰すと「Xaeroメモリが空」と区別できず、幽霊フィルタが全件を消してしまう。
+            // リフレクション名がXaeroのバージョンと不一致の可能性があるため必ずログに残す。
+            HikariPointSyncer.LOGGER.warn("[HPS] Xaeroメモリからのウェイポイント取得に失敗しました（Xaeroのバージョン不一致によるリフレクション失敗の可能性）", e);
+        }
+        HikariPointSyncer.LOGGER.info("[HPS] Xaeroメモリ上のウェイポイント数 = " + all.size());
         return all;
     }
 
@@ -878,18 +938,11 @@ public class XaeroIntegration {
      */
     public static void writeWaypointToFileDirectly(SyncWaypoint wp, String serverFolder) {
         try {
-            String dimId = "0";
-            if (wp.dimension.equalsIgnoreCase("the_nether")) dimId = "-1";
-            else if (wp.dimension.equalsIgnoreCase("the_end")) dimId = "1";
-            else if (wp.dimension.startsWith("dim_")) dimId = wp.dimension.replace("dim_", "");
-
-            Path dimDir = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId);
-            if (!Files.exists(dimDir)) {
-                Files.createDirectories(dimDir);
+            // 現在のサブワールドに対応する実ファイルを解決（既存ファイルがあれば再利用）
+            Path txtFile = resolveWaypointFile(serverFolder, wp.dimension, getCurrentSubWorldName());
+            if (!Files.exists(txtFile.getParent())) {
+                Files.createDirectories(txtFile.getParent());
             }
-
-            // 現在のサブワールドに対応するテキストファイル名に保存 (Velocity等の複数サーバー対応)
-            Path txtFile = dimDir.resolve("mw$" + getCurrentSubWorldName() + ".txt");
             List<String> lines = new ArrayList<>();
             if (Files.exists(txtFile)) {
                 try (BufferedReader r = Files.newBufferedReader(txtFile, StandardCharsets.UTF_8)) {
@@ -954,12 +1007,7 @@ public class XaeroIntegration {
      */
     public static void removeWaypointFromFileDirectly(SyncWaypoint wp, String serverFolder) {
         try {
-            String dimId = "0";
-            if (wp.dimension.equalsIgnoreCase("the_nether")) dimId = "-1";
-            else if (wp.dimension.equalsIgnoreCase("the_end")) dimId = "1";
-            else if (wp.dimension.startsWith("dim_")) dimId = wp.dimension.replace("dim_", "");
-
-            Path txtFile = XAERO_DIR.resolve(serverFolder).resolve("dim%" + dimId).resolve("mw$" + getCurrentSubWorldName() + ".txt");
+            Path txtFile = resolveWaypointFile(serverFolder, wp.dimension, getCurrentSubWorldName());
             if (!Files.exists(txtFile)) return;
 
             List<String> lines = new ArrayList<>();
@@ -1083,6 +1131,9 @@ public class XaeroIntegration {
                 }
             } catch (Exception ignored) {}
         }
+        // ここに到達した＝現在のSub-World IDをXaeroから取得できなかった。
+        // "default" を仮定して継続するが、別Sub-World利用時はファイル不一致の原因になりうるため記録する。
+        HikariPointSyncer.LOGGER.warn("[HPS] Xaeroから現在のSub-World IDを取得できませんでした。'default' を使用します（Xaeroのバージョン不一致の可能性）");
         return "default";
     }
 }

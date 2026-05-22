@@ -141,26 +141,35 @@ public class LocalWaypointScreen extends Screen {
             subWorldSets.add(new XaeroWorldSet("default", "overworld", null));
         }
 
-        // 現在のディメンションを特定して自動選択インデックスを計算
-        String myDim = "overworld";
-        if (client != null && client.world != null) {
-            if (client.world.getRegistryKey() == net.minecraft.world.World.NETHER) myDim = "the_nether";
-            else if (client.world.getRegistryKey() == net.minecraft.world.World.END) myDim = "the_end";
+        // 選択中のサーバーが現在接続中のサーバーかどうかを判定する。
+        // 別サーバーを選んでいるときに「現在地」基準で (auto) を付けると誤解を招くため、
+        // (auto) ラベルと現在ディメンションの自動選択は接続中サーバーのときだけ行う。
+        boolean isCurrentServer = false;
+        ServerInfo curSrv = MinecraftClient.getInstance().getCurrentServerEntry();
+        if (curSrv != null) {
+            String currentFolder = "Multiplayer_" + curSrv.address.replace(":", "_");
+            isCurrentServer = currentFolder.equalsIgnoreCase(serverFolder);
         }
 
         int defDimIdx = 0;
-        for (int i = 0; i < subWorldSets.size(); i++) {
-            if (subWorldSets.get(i).dimension.equalsIgnoreCase(myDim)) {
-                defDimIdx = i;
-                break;
-            }
-        }
+        if (isCurrentServer && client != null && client.world != null) {
+            String myDim = "overworld";
+            if (client.world.getRegistryKey() == net.minecraft.world.World.NETHER) myDim = "the_nether";
+            else if (client.world.getRegistryKey() == net.minecraft.world.World.END) myDim = "the_end";
 
-        // 該当項目に (auto) を追記
-        if (defDimIdx >= 0 && defDimIdx < subWorldDisplayList.size()) {
-            String orig = subWorldDisplayList.get(defDimIdx);
-            if (!orig.contains("(auto)")) {
-                subWorldDisplayList.set(defDimIdx, orig + " (auto)");
+            for (int i = 0; i < subWorldSets.size(); i++) {
+                if (subWorldSets.get(i).dimension.equalsIgnoreCase(myDim)) {
+                    defDimIdx = i;
+                    break;
+                }
+            }
+
+            // 該当項目に (auto) を追記
+            if (defDimIdx >= 0 && defDimIdx < subWorldDisplayList.size()) {
+                String orig = subWorldDisplayList.get(defDimIdx);
+                if (!orig.contains("(auto)")) {
+                    subWorldDisplayList.set(defDimIdx, orig + " (auto)");
+                }
             }
         }
 
@@ -182,45 +191,37 @@ public class LocalWaypointScreen extends Screen {
 
         // 1. まずディスクのテキストファイルからローカルウェイポイントを読み込む
         List<SyncWaypoint> fileWps = XaeroIntegration.getWaypointsFromSet(selectedSet, serverFolder);
-        
-        // 2. メモリ上（Xaeroの実行状態）に実際にロードされているウェイポイントリストを取得
-        List<SyncWaypoint> memoryWps = XaeroIntegration.getMemoryWaypoints();
-        
-        // 3. 現在接続中のディメンションに関して、メモリ上に存在しない（＝実際に削除された）幽霊データを完全に除外
-        List<SyncWaypoint> filteredWps = new ArrayList<>();
-        for (SyncWaypoint fileWp : fileWps) {
-            boolean existsInMemory = false;
-            for (SyncWaypoint memWp : memoryWps) {
-                if (memWp.name.equalsIgnoreCase(fileWp.name)
-                    && memWp.x == fileWp.x
-                    && memWp.z == fileWp.z
-                    && memWp.dimension.equalsIgnoreCase(fileWp.dimension)) {
-                    existsInMemory = true;
-                    break;
-                }
-            }
-            
-            MinecraftClient mc = MinecraftClient.getInstance();
-            if (mc.world != null) {
-                String activeDim = "overworld";
-                if (mc.world.getRegistryKey() == net.minecraft.world.World.NETHER) activeDim = "the_nether";
-                else if (mc.world.getRegistryKey() == net.minecraft.world.World.END) activeDim = "the_end";
-                
-                // 現在プレイヤーがいるアクティブなディメンションである場合、メモリ側の状態を「真の正解」とし、メモリにないものは除外する
-                if (selectedSet.dimension.equalsIgnoreCase(activeDim)) {
-                    if (existsInMemory) {
-                        filteredWps.add(fileWp);
+
+        // 2. 選択中のセットが「今プレイ中の文脈」(接続サーバー＋アクティブSub-World＋アクティブDimension) と
+        //    完全一致するときだけ、Xaeroメモリと突き合わせて幽霊データ（削除済みなのにファイルに残る行）を除外する。
+        //    別サーバー・別Sub-World・別DimのデータはXaeroがメモリにロードしていないだけなので、
+        //    ここでメモリ突き合わせをすると正常なデータまで全消えしてしまう（プルダウン切り替えで同期が崩れる原因）。
+        boolean live = XaeroIntegration.isLiveContext(serverFolder, selectedSet);
+        List<SyncWaypoint> filteredWps;
+        if (live) {
+            List<SyncWaypoint> memoryWps = XaeroIntegration.getMemoryWaypoints();
+            filteredWps = new ArrayList<>();
+            for (SyncWaypoint fileWp : fileWps) {
+                boolean existsInMemory = false;
+                for (SyncWaypoint memWp : memoryWps) {
+                    if (memWp.name.equalsIgnoreCase(fileWp.name)
+                        && memWp.x == fileWp.x
+                        && memWp.z == fileWp.z
+                        && memWp.dimension.equalsIgnoreCase(fileWp.dimension)) {
+                        existsInMemory = true;
+                        break;
                     }
-                } else {
-                    // 現在プレイヤーがいない他のディメンションのデータについては、メモリにロードされていないだけなのでディスクデータを表示する
+                }
+                if (existsInMemory) {
                     filteredWps.add(fileWp);
                 }
-            } else {
-                filteredWps.add(fileWp);
             }
+        } else {
+            filteredWps = fileWps;
         }
 
-        HikariPointSyncer.LOGGER.info("[HPS] 読み込まれたWaypoint数=" + filteredWps.size() + " (フィルタ前=" + fileWps.size() + ")");
+        HikariPointSyncer.LOGGER.info("[HPS] 読み込まれたWaypoint数=" + filteredWps.size()
+            + " (フィルタ前=" + fileWps.size() + ", live=" + live + ")");
         listWidget.clearAndAdd(filteredWps, selectedSet.getDisplayName(serverFolder));
     }
 

@@ -1,0 +1,25 @@
+# gradle
+.gradle/
+build/
+out/
+classes/
+
+# eclipse
+*.launch
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+
+# idea
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# fabric / minecraft run dir
+run/
+
+# vscode
+.vscode/
